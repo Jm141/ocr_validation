@@ -7,14 +7,8 @@ import re
 import cv2
 import numpy as np
 
-# Set the Tesseract executable path
-tesseract_path = r'C:\Users\User1\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
-if os.path.exists(tesseract_path):
-    pytesseract.pytesseract.tesseract_cmd = tesseract_path
-else:
-    print(f"Warning: Tesseract not found at {tesseract_path}")
-    # Fallback to PATH
-    pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+# Set Tesseract command (will use system Tesseract installed via apt-get)
+pytesseract.pytesseract.tesseract_cmd = 'tesseract'
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
