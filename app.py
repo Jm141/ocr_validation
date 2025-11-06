@@ -7,8 +7,13 @@ import re
 import cv2
 import numpy as np
 
-# Set Tesseract command (will use system Tesseract installed via apt-get)
-pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+# Set Tesseract command path - works both in Docker and local development
+try:
+    # This will work in the Docker container
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+except Exception:
+    # Fallback for local development if Tesseract is in PATH
+    pytesseract.pytesseract.tesseract_cmd = 'tesseract'
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
@@ -360,4 +365,5 @@ def upload_file():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
