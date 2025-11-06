@@ -8,4 +8,4 @@ apt-get install -y tesseract-ocr tesseract-ocr-eng
 pip install -r requirements.txt
 
 # Run the Gunicorn server
-exec gunicorn --bind 0.0.0.0:$PORT --timeout 500 --workers 2 --threads 4 --worker-class=gthread wsgi:app
+exec gunicorn --bind 0.0.0.0:$PORT --timeout 50000 --workers 2 --threads 4 --worker-class=gthread wsgi:app
