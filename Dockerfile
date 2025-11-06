@@ -1,29 +1,29 @@
-# Use the official Python 3.9 image
-FROM python:3.9-slim
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set the working directory
-WORKDIR /app
+# Use the official Python 3.9 image with Debian Buster for better compatibility
+FROM python:3.9-slim-buster
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FLASK_APP=app.py \
     FLASK_ENV=production \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata/ \
+    PATH="$PATH:/usr/bin/tesseract"
+
+# Set the working directory
+WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
     gcc \
     python3-dev \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /usr/share/tesseract-ocr/4.00/tessdata/ \
+    && ln -s /usr/share/tesseract-ocr/tessdata /usr/share/tesseract-ocr/4.00/tessdata \
+    && tesseract --list-langs
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
@@ -35,12 +35,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy the rest of the application
 COPY . .
 
-# Create necessary directories
+# Create necessary directories and set permissions
 RUN mkdir -p static/uploads && \
-    chmod -R 755 static/
+    chmod -R 755 static/ && \
+    chmod +x start.sh
 
 # Expose the port the app runs on
 EXPOSE 10000
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:10000/ || exit 1
+
 # Command to run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "2", "--threads", "4", "app:app"]
+CMD ["./start.sh"]

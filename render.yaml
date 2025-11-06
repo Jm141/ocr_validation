@@ -15,7 +15,7 @@ services:
         value: /usr/share/tesseract-ocr/4.00/tessdata/
     plan: free
     numInstances: 1
-    healthCheckPath: /
+    healthCheckPath: /health
     autoDeploy: yes
     buildCommand: |
       ./build.sh

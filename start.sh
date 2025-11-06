@@ -1,11 +1,29 @@
 #!/bin/bash
+set -e  # Exit on error
 
-# Install Tesseract and its dependencies
-apt-get update
-apt-get install -y tesseract-ocr tesseract-ocr-eng
+# Set TESSDATA_PREFIX if not set
+export TESSDATA_PREFIX=${TESSDATA_PREFIX:-/usr/share/tesseract-ocr/4.00/tessdata/}
 
-# Install Python dependencies
-pip install -r requirements.txt
+# Create necessary directories
+mkdir -p $TESSDATA_PREFIX
 
-# Run the Gunicorn server
-exec gunicorn --bind 0.0.0.0:$PORT --timeout 50000 --workers 2 --threads 4 --worker-class=gthread wsgi:app
+# Verify Tesseract installation
+echo "Verifying Tesseract installation..."
+tesseract --version || echo "Tesseract not found, installation may be required"
+
+# Set Python path
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+
+# Run Gunicorn with increased timeout and better logging
+echo "Starting Gunicorn server..."
+exec gunicorn \
+    --bind 0.0.0.0:$PORT \
+    --timeout 3000 \
+    --workers 1 \
+    --worker-class gthread \
+    --threads 4 \
+    --log-level debug \
+    --access-logfile - \
+    --error-logfile - \
+    --preload \
+    wsgi:app

@@ -185,6 +185,22 @@ def verify_student():
 def index():
     return render_template('index.html')
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for load balancers and monitoring"""
+    return jsonify({
+        'status': 'healthy',
+        'tesseract': 'available' if is_tesseract_available() else 'unavailable'
+    }), 200
+
+def is_tesseract_available():
+    """Check if Tesseract is available"""
+    try:
+        pytesseract.get_tesseract_version()
+        return True
+    except (pytesseract.TesseractNotFoundError, Exception):
+        return False
+
 def clean_text_for_matching(text):
     """Clean and normalize text for matching"""
     return re.sub(r'[^\w\s]', ' ', text.lower())
