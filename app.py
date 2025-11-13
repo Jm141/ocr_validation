@@ -1,5 +1,9 @@
 import os
-from flask import Flask, render_template, request, jsonify
+import time
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.utils import secure_filename
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
@@ -18,6 +22,120 @@ except Exception:
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB max file size
+
+# Task queue and worker pool
+task_queue = queue.Queue()
+result_store = {}
+result_lock = threading.Lock()
+
+# Thread pool for processing tasks
+MAX_WORKERS = 5
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+def worker():
+    """Worker function to process tasks from the queue"""
+    while True:
+        task_id, task = task_queue.get()
+        if task is None:  # Shutdown signal
+            break
+        try:
+            result = process_verification(
+                task['file'],
+                task['last_name'],
+                task['birthday'],
+                task['student_id']
+            )
+            with result_lock:
+                result_store[task_id] = {
+                    'status': 'completed',
+                    'result': result,
+                    'timestamp': time.time()
+                }
+        except Exception as e:
+            with result_lock:
+                result_store[task_id] = {
+                    'status': 'error',
+                    'error': str(e),
+                    'timestamp': time.time()
+                }
+        task_queue.task_done()
+
+# Start worker threads
+for _ in range(MAX_WORKERS):
+    threading.Thread(target=worker, daemon=True).start()
+
+def process_verification(file, last_name, birthday, student_id):
+    """Process verification (moved from verify_student)"""
+    try:
+        # Process the image and extract text
+        image = Image.open(file)
+        image = image.convert('L')
+        
+        # Resize for better OCR
+        base_width = 2000
+        w_percent = (base_width / float(image.size[0]))
+        h_size = int((float(image.size[1]) * float(w_percent)))
+        image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
+        
+        # Convert to binary image
+        img_array = np.array(image)
+        _, binary_image = cv2.threshold(img_array, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        image = Image.fromarray(binary_image)
+        
+        # Extract text with Tesseract using multiple configurations
+        configs = [
+            r'--oem 3 --psm 6',
+            r'--oem 3 --psm 4',
+            r'--oem 3 --psm 11'
+        ]
+        
+        all_text = []
+        for config in configs:
+            current_text = pytesseract.image_to_string(image, config=config)
+            if current_text.strip():
+                all_text.append(current_text.strip())
+        
+        # Combine all extracted text
+        full_text = ' '.join(all_text)
+        
+        # Clean and normalize all text for comparison
+        clean_extracted = clean_text_for_matching(full_text)
+        clean_last_name = clean_text_for_matching(last_name)
+        clean_student_id = clean_text_for_matching(student_id).replace(' ', '')
+        
+        # Special handling for birthday to handle different formats
+        clean_birthday = clean_date_string(birthday)
+        clean_extracted_date = clean_date_string(full_text)
+        
+        # Verification
+        last_name_found = clean_last_name in clean_extracted
+        birthday_found = clean_birthday and clean_birthday in clean_extracted_date
+        student_id_found = clean_student_id and clean_student_id in clean_extracted.replace(' ', '')
+        
+        return {
+            'success': True,
+            'verified': all([last_name_found, birthday_found, student_id_found]),
+            'verification': {
+                'last_name': {
+                    'provided': last_name,
+                    'verified': last_name_found,
+                },
+                'birthday': {
+                    'provided': birthday,
+                    'verified': birthday_found,
+                },
+                'student_id': {
+                    'provided': student_id,
+                    'verified': student_id_found,
+                }
+            }
+        }
+    except Exception as e:
+        app.logger.error(f"Error in verification: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
 
 # Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -73,6 +191,66 @@ def verify_student():
 
     if file.filename == '':
         return jsonify({'success': False, 'error': 'No selected file'}), 400
+        
+    # Create a unique task ID
+    task_id = str(int(time.time() * 1000)) + '_' + str(hash(file.filename))
+    
+    # Save file to process
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+    
+    # Add task to queue
+    with open(filepath, 'rb') as f:
+        task_queue.put((task_id, {
+            'file': f.read(),
+            'last_name': last_name,
+            'birthday': birthday,
+            'student_id': student_id
+        }))
+    
+    # Clean up the file
+    os.remove(filepath)
+    
+    # Return immediately with task ID
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'status': 'queued',
+        'message': 'Request received and queued for processing'
+    })
+
+@app.route('/api/verify_status/<task_id>', methods=['GET'])
+def verify_status(task_id):
+    """Check the status of a verification task"""
+    with result_lock:
+        result = result_store.get(task_id)
+    
+    if not result:
+        return jsonify({
+            'success': True,
+            'status': 'not_found',
+            'message': 'Task ID not found'
+        })
+    
+    if result['status'] == 'completed':
+        return jsonify({
+            'success': True,
+            'status': 'completed',
+            'result': result['result']
+        })
+    elif result['status'] == 'error':
+        return jsonify({
+            'success': False,
+            'status': 'error',
+            'error': result['error']
+        })
+    
+    return jsonify({
+        'success': True,
+        'status': 'processing',
+        'message': 'Task is still being processed'
+    })
 
     try:
         # Process the image and extract text
@@ -380,6 +558,24 @@ def upload_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def cleanup_old_results():
+    """Clean up old results from the result store"""
+    while True:
+        time.sleep(3600)  # Clean up every hour
+        current_time = time.time()
+        with result_lock:
+            # Remove results older than 24 hours
+            to_remove = [
+                task_id for task_id, result in result_store.items()
+                if current_time - result.get('timestamp', 0) > 86400
+            ]
+            for task_id in to_remove:
+                result_store.pop(task_id, None)
+
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_old_results, daemon=True)
+cleanup_thread.start()
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, threaded=True)

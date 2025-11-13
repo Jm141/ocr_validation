@@ -1,5 +1,5 @@
-# Use the official Python 3.9 image with Debian Buster for better compatibility
-FROM python:3.9-slim-buster
+# Use the official Python 3.9 image with Debian Bullseye for better compatibility and security
+FROM python:3.9-slim-bullseye
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-eng \
     gcc \
     python3-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /usr/share/tesseract-ocr/4.00/tessdata/ \
@@ -43,9 +45,19 @@ RUN mkdir -p static/uploads && \
 # Expose the port the app runs on
 EXPOSE 10000
 
-# Health check
+# Health check with queue status
 HEALTHCHECK --interval=30s --timeout=30s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:10000/ || exit 1
+    CMD curl -f http://localhost:10000/health || exit 1
 
-# Command to run the application
-CMD ["./start.sh"]
+# Install additional Python packages for testing and monitoring
+RUN pip install --no-cache-dir \
+    pytest \
+    pytest-cov \
+    gunicorn \
+    gevent
+
+# Set environment variables for Gunicorn
+ENV GUNICORN_CMD_ARGS="--workers=5 --worker-class=gevent --worker-connections=1000 --timeout=120 --bind=0.0.0.0:10000"
+
+# Command to run the application with Gunicorn
+CMD ["gunicorn", "app:app"]
